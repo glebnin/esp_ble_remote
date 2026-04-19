@@ -1,3 +1,12 @@
+/*
+TODO: 
+1. Add comments
+2. Make map_joystick_to_mouse() quadrantic
+3. Joystick interrupts
+4. Status LED
+
+*/
+
 #include <stdio.h>
 #include <string.h>
 #include "freertos/FreeRTOS.h"
@@ -43,7 +52,7 @@ void ble_hid_task(void *pvParameters)
             send_media_key(0x02);
         else if (s_wakeup_pin_to_process == BTN_PAUSE)
             send_media_key(0x04);
-
+            
         s_wakeup_pin_to_process = 0; // Clear it
     }
 
@@ -61,6 +70,10 @@ void ble_hid_task(void *pvParameters)
                     send_media_key(0x02);
                 else if (last_pressed_pin == BTN_PAUSE)
                     send_media_key(0x04);
+                else if (last_pressed_pin == BTN_MOUSE_LEFT)
+                    send_mouse_click(0x01);
+                else if (last_pressed_pin == BTN_MOUSE_RIGHT)
+                    send_mouse_click(0x02);
             }
             while (gpio_get_level(last_pressed_pin) == 0)
             {
@@ -95,6 +108,29 @@ void ble_hid_task(void *pvParameters)
     }
 }
 
+void joystick_task(void *pvParameters)
+{
+    adc_init();
+    while (1) {
+        if (hid_dev_is_connected()) {
+            int x_val = 0, y_val = 0;
+            x_val = read_adc(JOYSTICK_X_CH);
+            y_val = read_adc(JOYSTICK_Y_CH);
+
+            int8_t dx = -map_joystick_to_mouse(x_val);
+            int8_t dy = -map_joystick_to_mouse(y_val);
+            //ESP_LOGI(TAG, "X: %d, Y: %d -> dx: %d, dy: %d", x_val, y_val, dx, dy);
+            
+
+            if (dx != 0 || dy != 0) {
+                send_mouse_move(dx, dy);
+            }
+        }
+        // Delay defines the "smoothness" and update rate (10-20ms is ideal)
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
+}
+
 void ble_hid_device_host_task(void *param)
 {
     ESP_LOGI(TAG, "BLE Host Task Started");
@@ -114,6 +150,8 @@ void ble_hid_task_start_up(void)
     }
     xTaskCreate(ble_hid_task, "ble_hid_task", 3 * 1024, NULL, configMAX_PRIORITIES - 3,
                 hid_dev_get_task_hdl_ptr());
+    xTaskCreate(joystick_task, "joystick_task", 3 * 1024, NULL, configMAX_PRIORITIES - 4, NULL);
+    
     ESP_LOGI(TAG, "Task created");
 }
 

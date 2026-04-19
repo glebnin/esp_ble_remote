@@ -13,22 +13,52 @@ void ble_hid_task_start_up(void);
 void ble_hid_task_shut_down(void);
 
 const unsigned char mediaReportMap[] = {
-    0x05, 0x0C, // Usage Page (Consumer)
-    0x09, 0x01, // Usage (Consumer Control)
-    0xA1, 0x01, // Collection (Application)
-    0x85, 0x03, //   Report ID (3)
-    0x09, 0xE9, //   Usage (Volume Increment) - Bit 0
-    0x09, 0xEA, //   Usage (Volume Decrement) - Bit 1
-    0x09, 0xCD, //   Usage (Play/Pause)       - Bit 2
-    0x15, 0x00, //   Logical Minimum (0)
-    0x25, 0x01, //   Logical Maximum (1)
-    0x75, 0x01, //   Report Size (1)
-    0x95, 0x03, //   Report Count (3)
-    0x81, 0x02, //   Input (Data,Var,Abs)
-    0x75, 0x05, //   Report Size (5) - Padding
-    0x95, 0x01, //   Report Count (1)
-    0x81, 0x03, //   Input (Const,Var,Abs)
-    0xC0        // End Collection
+    // --- Mouse Clicks (Report ID 2) ---
+    0x05, 0x01,        // Usage Page (Generic Desktop Controls)
+    0x09, 0x02,        // Usage (Mouse)
+    0xA1, 0x01,        // Collection (Application)
+    0x85, 0x02,        //   Report ID (2)
+    0x09, 0x01,        //   Usage (Pointer)
+    0xA1, 0x00,        //   Collection (Physical)
+    0x05, 0x09,        //     Usage Page (Button)
+    0x19, 0x01,        //     Usage Minimum (1) - Left Click
+    0x29, 0x02,        //     Usage Maximum (2) - Right Click
+    0x15, 0x00,        //     Logical Minimum (0)
+    0x25, 0x01,        //     Logical Maximum (1)
+    0x95, 0x02,        //     Report Count (2)
+    0x75, 0x01,        //     Report Size (1)
+    0x81, 0x02,        //     Input (Data,Var,Abs)
+    0x95, 0x01,        //     Report Count (1)
+    0x75, 0x06,        //     Report Size (6) - Padding to 1 byte
+    0x81, 0x03,        //     Input (Const,Var,Abs)
+    0x05, 0x01,        //     Usage Page (Generic Desktop)
+    0x09, 0x30,        //     Usage (X)
+    0x09, 0x31,        //     Usage (Y)
+    0x15, 0x81,        //     Logical Minimum (-127)
+    0x25, 0x7F,        //     Logical Maximum (127)
+    0x75, 0x08,        //     Report Size (8)
+    0x95, 0x02,        //     Report Count (2)
+    0x81, 0x06,        //     Input (Data,Var,Rel)
+    0xC0,              //   End Collection (Physical)
+    0xC0,              // End Collection (Application)
+
+    // --- Media Keys (Report ID 3) ---
+    0x05, 0x0C,        // Usage Page (Consumer)
+    0x09, 0x01,        // Usage (Consumer Control)
+    0xA1, 0x01,        // Collection (Application)
+    0x85, 0x03,        //   Report ID (3)
+    0x09, 0xE9,        //   Usage (Volume Increment)
+    0x09, 0xEA,        //   Usage (Volume Decrement)
+    0x09, 0xCD,        //   Usage (Play/Pause)
+    0x15, 0x00,        //   Logical Minimum (0)
+    0x25, 0x01,        //   Logical Maximum (1)
+    0x75, 0x01,        //   Report Size (1)
+    0x95, 0x03,        //   Report Count (3)
+    0x81, 0x02,        //   Input (Data,Var,Abs)
+    0x95, 0x01,        //   Report Count (1)
+    0x75, 0x05,        //   Report Size (5) - Padding to 1 byte
+    0x81, 0x03,        //   Input (Const,Var,Abs)
+    0xC0               // End Collection
 };
 
 static esp_hid_raw_report_map_t ble_report_map = {
@@ -131,16 +161,39 @@ void send_media_key(uint8_t key_mask)
 {
     if (s_ble_hid_param.hid_dev && esp_hidd_dev_connected(s_ble_hid_param.hid_dev))
     {
-        // Send only 1 byte as defined in report map
         uint8_t report[HID_CC_IN_RPT_LEN] = {key_mask};
         esp_hidd_dev_input_set(s_ble_hid_param.hid_dev, 0, HID_RPT_ID_MEDIA, report, HID_CC_IN_RPT_LEN);
 
-        // Send release report
+        // Send release
         uint8_t release[HID_CC_IN_RPT_LEN] = {0x00};
         esp_hidd_dev_input_set(s_ble_hid_param.hid_dev, 0, HID_RPT_ID_MEDIA, release, HID_CC_IN_RPT_LEN);
         ESP_LOGI(TAG, "Media key sent");
     }
 }
+
+void send_mouse_click(uint8_t click_mask)
+{
+    if (s_ble_hid_param.hid_dev && esp_hidd_dev_connected(s_ble_hid_param.hid_dev))
+    {
+        uint8_t report[HID_MOUSE_IN_RPT_LEN] = {click_mask, 0x00, 0x00};
+        esp_hidd_dev_input_set(s_ble_hid_param.hid_dev, 0, HID_RPT_ID_MOUSE, report, HID_MOUSE_IN_RPT_LEN);
+                
+        // release
+        uint8_t release[HID_MOUSE_IN_RPT_LEN] = {0x00, 0x00, 0x00};
+        esp_hidd_dev_input_set(s_ble_hid_param.hid_dev, 0, HID_RPT_ID_MOUSE, release, HID_MOUSE_IN_RPT_LEN);
+        ESP_LOGI(TAG, "Mouse click sent");
+    }
+}
+
+void send_mouse_move(int8_t dx, int8_t dy)
+{
+    if (s_ble_hid_param.hid_dev && esp_hidd_dev_connected(s_ble_hid_param.hid_dev))
+    {
+        uint8_t report[HID_MOUSE_IN_RPT_LEN] = {0x00, (uint8_t)dx, (uint8_t)dy};
+        esp_hidd_dev_input_set(s_ble_hid_param.hid_dev, 0, HID_RPT_ID_MOUSE, report, HID_MOUSE_IN_RPT_LEN);
+    }
+}
+
 
 int hid_dev_init(){
     return esp_hidd_dev_init(&ble_hid_config, ESP_HID_TRANSPORT_BLE, ble_hidd_event_callback, &s_ble_hid_param.hid_dev);

@@ -111,7 +111,7 @@ static int nimble_hid_gap_event(struct ble_gap_event *event, void *arg)
                     event->enc_change.status);
         rc = ble_gap_conn_find(event->enc_change.conn_handle, &desc);
         assert(rc == 0);
-        // ble_hid_task_start_up();
+        //ble_hid_task_start_up();
         return 0;
 
     case BLE_GAP_EVENT_NOTIFY_TX:
@@ -132,7 +132,7 @@ static int nimble_hid_gap_event(struct ble_gap_event *event, void *arg)
         /* Delete the old bond. */
         rc = ble_gap_conn_find(event->repeat_pairing.conn_handle, &desc);
         assert(rc == 0);
-        //ble_store_util_delete_peer(&desc.peer_id_addr);
+        ble_store_util_delete_peer(&desc.peer_id_addr);
 
         /* Return BLE_GAP_REPEAT_PAIRING_RETRY to indicate that the host should
          * continue with the pairing operation.
