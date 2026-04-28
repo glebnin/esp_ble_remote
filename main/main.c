@@ -25,6 +25,7 @@ TODO:
 #include "gap.h"
 #include "hid_dev.h"
 #include "peripherals.h"
+#include "led.h"
 
 static const char *TAG = "ESP_HID_APP";
 
@@ -45,6 +46,7 @@ void power_management_task(void *pvParameters)
             ESP_LOGI("POWER", "No activity for %d ms. Preparing for Deep Sleep...", INACTIVITY_TIMEOUT_MS);
 
             ESP_LOGI(TAG, "Preparing for Deep Sleep...");
+            led_set_mode(LED_STATE_SLEEP_PREP);
 
             // 1. Stop BLE advertising and disconnect to release resources gracefully
             ble_gap_adv_stop();
@@ -62,7 +64,8 @@ void power_management_task(void *pvParameters)
 
             uint64_t mask = (1ULL << BTN_VOL_UP) | (1ULL << BTN_VOL_DOWN) | (1ULL << BTN_PAUSE) | (1ULL << BTN_MOUSE_RIGHT);
             esp_sleep_enable_ext1_wakeup(mask, ESP_EXT1_WAKEUP_ANY_LOW);
-
+            led_deinit();
+            
             ESP_LOGI(TAG, "Starting Deep Sleep...");
             esp_deep_sleep_start();
         }
@@ -193,6 +196,10 @@ void ble_store_config_init(void);
 
 void app_main(void)
 {
+    led_init();
+    xTaskCreate(led_task, "led_task", 2048, NULL, 2, NULL);
+    led_set_mode(LED_STATE_CONNECTING);
+
     /* Initialize NVS. */
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND)

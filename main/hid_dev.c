@@ -4,6 +4,7 @@
 #include "freertos/task.h"
 
 #include "gap.h"
+#include "led.h"
 
 
 static const char *TAG = "HID_DEV";
@@ -102,6 +103,7 @@ void ble_hidd_event_callback(void *handler_args, esp_event_base_t base, int32_t 
     case ESP_HIDD_CONNECT_EVENT:
     {
         ESP_LOGI(TAG, "CONNECT");
+        led_set_mode(LED_STATE_CONNECTED);
         esp_hidd_dev_battery_set(param->connect.dev, 100);
         ble_hid_task_start_up();
         break;
@@ -141,6 +143,7 @@ void ble_hidd_event_callback(void *handler_args, esp_event_base_t base, int32_t 
     case ESP_HIDD_DISCONNECT_EVENT:
     {
         ESP_LOGI(TAG, "DISCONNECT: %s", esp_hid_disconnect_reason_str(esp_hidd_dev_transport_get(param->disconnect.dev), param->disconnect.reason));
+        led_set_mode(LED_STATE_CONNECTING);
         ble_hid_task_shut_down();
         // esp_hid_ble_gap_adv_start();
         break;
