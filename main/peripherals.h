@@ -28,7 +28,7 @@ extern uint32_t s_wakeup_pin_to_process;
 
 uint32_t get_pin_from_mask(uint64_t mask);
 void gpio_init_buttons();
-int8_t map_joystick_to_mouse(int adc_value);
+void process_joystick_radial(int raw_x, int raw_y, int8_t *out_dx, int8_t *out_dy);
 void adc_init();
 int read_adc(adc_channel_t channel);
 

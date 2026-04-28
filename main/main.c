@@ -141,8 +141,8 @@ void joystick_task(void *pvParameters)
         x_val = read_adc(JOYSTICK_X_CH);
         y_val = read_adc(JOYSTICK_Y_CH);
 
-        int8_t dx = -map_joystick_to_mouse(x_val);
-        int8_t dy = -map_joystick_to_mouse(y_val);
+        int8_t dx, dy;
+        process_joystick_radial(x_val, y_val, &dx, &dy);
         // ESP_LOGI(TAG, "X: %d, Y: %d -> dx: %d, dy: %d", x_val, y_val, dx, dy);
 
         if (dx != 0 || dy != 0)

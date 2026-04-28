@@ -1,19 +1,23 @@
 #include "peripherals.h"
 #include "esp_log.h"
-
+#include <math.h>
 
 static const char *TAG = "PERIPHERALS";
 
-volatile uint32_t last_pressed_pin = 0; 
+volatile uint32_t last_pressed_pin = 0;
 uint32_t s_wakeup_pin_to_process = 0;
 SemaphoreHandle_t gpio_evt_semaphore = NULL;
 adc_oneshot_unit_handle_t adc1_handle;
 
 // Helper to convert bitmask to pin number
-uint32_t get_pin_from_mask(uint64_t mask) {
-    if (mask & (1ULL << BTN_VOL_UP)) return BTN_VOL_UP;
-    if (mask & (1ULL << BTN_VOL_DOWN)) return BTN_VOL_DOWN;
-    if (mask & (1ULL << BTN_PAUSE)) return BTN_PAUSE;
+uint32_t get_pin_from_mask(uint64_t mask)
+{
+    if (mask & (1ULL << BTN_VOL_UP))
+        return BTN_VOL_UP;
+    if (mask & (1ULL << BTN_VOL_DOWN))
+        return BTN_VOL_DOWN;
+    if (mask & (1ULL << BTN_PAUSE))
+        return BTN_PAUSE;
     return 0;
 }
 
@@ -22,7 +26,6 @@ void IRAM_ATTR gpio_isr_handler(void *arg)
     last_pressed_pin = (uint32_t)arg;
     gpio_intr_disable(last_pressed_pin);
 }
-
 
 void gpio_init_buttons()
 {
@@ -52,31 +55,47 @@ void gpio_init_buttons()
     gpio_wakeup_enable(BTN_MOUSE_RIGHT, GPIO_INTR_LOW_LEVEL);
 }
 
-// Calculate relative speed based on joystick position
-int8_t map_joystick_to_mouse(int adc_value) {
-    const int center = 2048;
-    const int deadzone = 200;
-    const int max_adc = 4095;
-    const int8_t max_speed = 15; // Max pixels per update
+// Vector-based joystick mapping to fix axial/diagonal inconsistency
+void process_joystick_radial(int raw_x, int raw_y, int8_t *out_dx, int8_t *out_dy)
+{
+    const int center_x = 1900;
+    const int center_y = 1900;
+    const int deadzone = 70;
+    const float max_speed = 15.0f;
 
-    int offset = adc_value - center;
+    // Calculate offsets from center
+    float off_x = (float)raw_x - center_x;
+    float off_y = (float)raw_y - center_y;
 
-    if (abs(offset) < deadzone) {
-        return 0;
+    // Calculate magnitude (distance from center)
+    float magnitude = sqrtf(off_x * off_x + off_y * off_y);
+
+    if (magnitude < deadzone)
+    {
+        *out_dx = 0;
+        *out_dy = 0;
+        return;
     }
 
-    // Normalize and scale to speed
-    float normalized = (float)(offset) / (center - deadzone);
-    int speed = (int)(normalized * max_speed);
+    // Normalize magnitude (0.0 to 1.0)
+    // Assume the physical limit is a circle with radius ~1900
+    float normalized_mag = (magnitude - deadzone) / (1900.0f - deadzone);
+    if (normalized_mag > 1.0f)
+        normalized_mag = 1.0f;
 
-    // Clamp values to int8_t range
-    if (speed > 127) return 127;
-    if (speed < -127) return -127;
+    // Apply Cubic Curve to magnitude for precision
+    float scaled_mag = normalized_mag * normalized_mag * normalized_mag;
 
-    return speed;
+    // Project scaled magnitude back to X and Y axes
+    // This ensures diagonal speed equals axial speed
+    float final_speed = scaled_mag * max_speed;
+
+    *out_dx = -(int8_t)((off_x / magnitude) * final_speed);
+    *out_dy = -(int8_t)((off_y / magnitude) * final_speed);
 }
 
-void adc_init(){
+void adc_init()
+{
     adc_oneshot_unit_init_cfg_t init_config = {
         .unit_id = ADC_UNIT_1,
     };
@@ -91,7 +110,8 @@ void adc_init(){
     ESP_LOGI(TAG, "ADC initialized");
 }
 
-int read_adc(adc_channel_t channel) {
+int read_adc(adc_channel_t channel)
+{
     int adc_raw;
     ESP_ERROR_CHECK(adc_oneshot_read(adc1_handle, channel, &adc_raw));
     return adc_raw;
