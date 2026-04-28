@@ -20,7 +20,6 @@ uint32_t get_pin_from_mask(uint64_t mask) {
 void IRAM_ATTR gpio_isr_handler(void *arg)
 {
     last_pressed_pin = (uint32_t)arg;
-    xSemaphoreGiveFromISR(gpio_evt_semaphore, NULL);
     gpio_intr_disable(last_pressed_pin);
 }
 

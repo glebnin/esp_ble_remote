@@ -1,5 +1,5 @@
 /*
-TODO: 
+TODO:
 1. Add comments
 2. Make map_joystick_to_mouse() quadrantic
 3. Joystick interrupts
@@ -28,10 +28,51 @@ TODO:
 
 static const char *TAG = "ESP_HID_APP";
 
+#define INACTIVITY_TIMEOUT_MS 20000 // 30 seconds
+static uint32_t last_activity_tick = 0;
+
+void power_management_task(void *pvParameters)
+{
+    last_activity_tick = xTaskGetTickCount();
+
+    while (1)
+    {
+        uint32_t current_tick = xTaskGetTickCount();
+        uint32_t elapsed = (current_tick - last_activity_tick) * portTICK_PERIOD_MS;
+
+        if (elapsed >= INACTIVITY_TIMEOUT_MS)
+        {
+            ESP_LOGI("POWER", "No activity for %d ms. Preparing for Deep Sleep...", INACTIVITY_TIMEOUT_MS);
+
+            ESP_LOGI(TAG, "Preparing for Deep Sleep...");
+
+            // 1. Stop BLE advertising and disconnect to release resources gracefully
+            ble_gap_adv_stop();
+            vTaskDelay(pdMS_TO_TICKS(100));
+
+            // 2. Configure RTC pins AFTER stopping heavy processes
+            gpio_num_t buttons[] = {BTN_VOL_UP, BTN_VOL_DOWN, BTN_PAUSE, BTN_MOUSE_RIGHT};
+            for (int i = 0; i < 4; i++)
+            {
+                rtc_gpio_init(buttons[i]);
+                rtc_gpio_set_direction(buttons[i], RTC_GPIO_MODE_INPUT_ONLY);
+                rtc_gpio_pullup_en(buttons[i]);
+                rtc_gpio_pulldown_dis(buttons[i]);
+            }
+
+            uint64_t mask = (1ULL << BTN_VOL_UP) | (1ULL << BTN_VOL_DOWN) | (1ULL << BTN_PAUSE) | (1ULL << BTN_MOUSE_RIGHT);
+            esp_sleep_enable_ext1_wakeup(mask, ESP_EXT1_WAKEUP_ANY_LOW);
+
+            ESP_LOGI(TAG, "Starting Deep Sleep...");
+            esp_deep_sleep_start();
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(500));
+    }
+}
 
 void ble_hid_task(void *pvParameters)
 {
-    gpio_evt_semaphore = xSemaphoreCreateBinary();
     gpio_init_buttons();
 
     ESP_LOGI(TAG, "Waiting for connection to send wakeup key...");
@@ -40,6 +81,7 @@ void ble_hid_task(void *pvParameters)
         vTaskDelay(pdMS_TO_TICKS(100));
     }
 
+#ifdef GPIO_WAKEUP_FIRST_SEND
     // 2. If we have a pending wakeup pin, process it once
     if (s_wakeup_pin_to_process != 0)
     {
@@ -52,58 +94,35 @@ void ble_hid_task(void *pvParameters)
             send_media_key(0x02);
         else if (s_wakeup_pin_to_process == BTN_PAUSE)
             send_media_key(0x04);
-            
+
         s_wakeup_pin_to_process = 0; // Clear it
     }
+#endif
 
     while (1)
     {
-        if (xSemaphoreTake(gpio_evt_semaphore, pdMS_TO_TICKS(10000)))
+        vTaskDelay(pdMS_TO_TICKS(50));
+        if (last_pressed_pin != 0 && gpio_get_level(last_pressed_pin) == 0) // last condition is for preventing sending media button if the semaphore been given from the joystick task
+        // conditions positioning is important here!
         {
-            vTaskDelay(pdMS_TO_TICKS(50));
-            if (gpio_get_level(last_pressed_pin) == 0)
-            {
-                // Handle button presses
-                if (last_pressed_pin == BTN_VOL_UP)
-                    send_media_key(0x01);
-                else if (last_pressed_pin == BTN_VOL_DOWN)
-                    send_media_key(0x02);
-                else if (last_pressed_pin == BTN_PAUSE)
-                    send_media_key(0x04);
-                else if (last_pressed_pin == BTN_MOUSE_LEFT)
-                    send_mouse_click(0x01);
-                else if (last_pressed_pin == BTN_MOUSE_RIGHT)
-                    send_mouse_click(0x02);
-            }
+            // Handle button presses
+            if (last_pressed_pin == BTN_VOL_UP)
+                send_media_key(0x01);
+            else if (last_pressed_pin == BTN_VOL_DOWN)
+                send_media_key(0x02);
+            else if (last_pressed_pin == BTN_PAUSE)
+                send_media_key(0x04);
+            else if (last_pressed_pin == BTN_MOUSE_LEFT)
+                send_mouse_click(0x01);
+            else if (last_pressed_pin == BTN_MOUSE_RIGHT)
+                send_mouse_click(0x02);
             while (gpio_get_level(last_pressed_pin) == 0)
             {
                 vTaskDelay(pdMS_TO_TICKS(10));
             }
             gpio_intr_enable(last_pressed_pin);
-        }
-        else
-        {
-            ESP_LOGI(TAG, "Preparing for Deep Sleep...");
-
-            // 1. Stop BLE advertising and disconnect to release resources gracefully
-            ble_gap_adv_stop();
-            vTaskDelay(pdMS_TO_TICKS(100));
-
-            // 2. Configure RTC pins AFTER stopping heavy processes
-            gpio_num_t buttons[] = {BTN_VOL_UP, BTN_VOL_DOWN, BTN_PAUSE};
-            for (int i = 0; i < 3; i++)
-            {
-                rtc_gpio_init(buttons[i]);
-                rtc_gpio_set_direction(buttons[i], RTC_GPIO_MODE_INPUT_ONLY);
-                rtc_gpio_pullup_en(buttons[i]);
-                rtc_gpio_pulldown_dis(buttons[i]);
-            }
-
-            uint64_t mask = (1ULL << BTN_VOL_UP) | (1ULL << BTN_VOL_DOWN) | (1ULL << BTN_PAUSE);
-            esp_sleep_enable_ext1_wakeup(mask, ESP_EXT1_WAKEUP_ANY_LOW);
-
-            ESP_LOGI(TAG, "Starting Deep Sleep...");
-            esp_deep_sleep_start();
+            last_pressed_pin = 0;
+            last_activity_tick = xTaskGetTickCount();
         }
     }
 }
@@ -111,20 +130,25 @@ void ble_hid_task(void *pvParameters)
 void joystick_task(void *pvParameters)
 {
     adc_init();
-    while (1) {
-        if (hid_dev_is_connected()) {
-            int x_val = 0, y_val = 0;
-            x_val = read_adc(JOYSTICK_X_CH);
-            y_val = read_adc(JOYSTICK_Y_CH);
 
-            int8_t dx = -map_joystick_to_mouse(x_val);
-            int8_t dy = -map_joystick_to_mouse(y_val);
-            //ESP_LOGI(TAG, "X: %d, Y: %d -> dx: %d, dy: %d", x_val, y_val, dx, dy);
-            
+    while (!hid_dev_is_connected())
+    {
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+    while (1)
+    {
+        int x_val = 0, y_val = 0;
+        x_val = read_adc(JOYSTICK_X_CH);
+        y_val = read_adc(JOYSTICK_Y_CH);
 
-            if (dx != 0 || dy != 0) {
-                send_mouse_move(dx, dy);
-            }
+        int8_t dx = -map_joystick_to_mouse(x_val);
+        int8_t dy = -map_joystick_to_mouse(y_val);
+        // ESP_LOGI(TAG, "X: %d, Y: %d -> dx: %d, dy: %d", x_val, y_val, dx, dy);
+
+        if (dx != 0 || dy != 0)
+        {
+            send_mouse_move(dx, dy);
+            last_activity_tick = xTaskGetTickCount();
         }
         // Delay defines the "smoothness" and update rate (10-20ms is ideal)
         vTaskDelay(pdMS_TO_TICKS(20));
@@ -140,7 +164,6 @@ void ble_hid_device_host_task(void *param)
     nimble_port_freertos_deinit();
 }
 
-
 void ble_hid_task_start_up(void)
 {
     if (hid_dev_get_task_hdl_ptr() == NULL)
@@ -151,8 +174,9 @@ void ble_hid_task_start_up(void)
     xTaskCreate(ble_hid_task, "ble_hid_task", 3 * 1024, NULL, configMAX_PRIORITIES - 3,
                 hid_dev_get_task_hdl_ptr());
     xTaskCreate(joystick_task, "joystick_task", 3 * 1024, NULL, configMAX_PRIORITIES - 4, NULL);
-    
-    ESP_LOGI(TAG, "Task created");
+    xTaskCreate(power_management_task, "power_management_task", 3 * 1024, NULL, configMAX_PRIORITIES - 5, NULL);
+
+    ESP_LOGI(TAG, "Tasks created");
 }
 
 void ble_hid_task_shut_down(void)
@@ -182,6 +206,8 @@ void app_main(void)
     ret = gap_init();
     ESP_ERROR_CHECK(ret);
 
+#ifdef GPIO_WAKEUP_FIRST_SEND
+
     // Check if we woke up from Deep Sleep via EXT1
     if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT1)
     {
@@ -189,6 +215,7 @@ void app_main(void)
         s_wakeup_pin_to_process = get_pin_from_mask(wakeup_pin_mask);
         ESP_LOGI(TAG, "Woke up by GPIO: %lu", s_wakeup_pin_to_process);
     }
+#endif
 
     ret = esp_hid_ble_gap_adv_init(ESP_HID_APPEARANCE_GENERIC, hid_dev_get_name());
 
